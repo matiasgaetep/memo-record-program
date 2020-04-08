@@ -1,0 +1,490 @@
+*&---------------------------------------------------------------------*
+*& Include          ZCFIN_MEMO_REC_F01
+*&---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*& Form ANULAR_MEMOS
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM busca_registros.
+
+  IF p_soc IS NOT INITIAL AND
+     p_fech IS NOT INITIAL.
+
+    SELECT * FROM fdes 
+      INTO TABLE @t_fdes
+      WHERE bukrs IN p_soc
+        AND datum IN p_fech
+        AND dsart IN p_dcto.
+
+    MOVE-CORRESPONDING t_fdes TO i_tab_fdes_disp.
+
+    IF i_tab_fdes_disp IS INITIAL.
+      MESSAGE ID 'ZMSG' TYPE 'S' NUMBER 006 DISPLAY LIKE 'E'.
+    ENDIF.
+
+  ELSE.
+    IF p_soc IS INITIAL.
+      MESSAGE ID 'ZMSG' TYPE 'S' NUMBER 004 DISPLAY LIKE 'E'.
+    ENDIF.
+    IF p_fech IS INITIAL.
+      MESSAGE ID 'ZMSG' TYPE 'S' NUMBER 005 DISPLAY LIKE 'E'.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form COMMIT_OR_WAIT
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM commit_or_wait .
+
+  COMMIT WORK AND WAIT.
+
+  CALL FUNCTION 'POPUP_TO_DISPLAY_TEXT'
+    EXPORTING
+      titel        = TEXT-005
+      textline1    = TEXT-006
+      start_column = 25
+      start_row    = 6.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form CONSULTA_POPUP
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM anular_memo.
+
+  DATA f_fdes LIKE t_fdes.
+  CLEAR: ty_fdes,
+         t_fdes,
+         tab_aux.
+
+  LOOP AT i_tab_fdes_disp INTO l_fdes_disp.
+    IF l_fdes_disp-flag EQ 'X'.
+      APPEND l_fdes_disp TO tab_aux.
+    ENDIF.
+  ENDLOOP.
+
+  MOVE-CORRESPONDING tab_aux TO t_fdes.
+
+  l_cant = lines( t_fdes ).
+
+  WRITE TEXT-002 TO l_texto.
+  REPLACE '&1' WITH l_cant INTO l_texto.
+  CONDENSE l_texto.
+  CALL FUNCTION 'POPUP_TO_DECIDE'
+    EXPORTING
+      defaultoption = '2'
+      textline1     = l_texto
+      text_option1  = TEXT-003
+      text_option2  = TEXT-004
+      titel         = TEXT-001
+    IMPORTING
+      answer        = l_resp.
+
+  IF l_resp EQ '1'.
+    CALL FUNCTION 'CASH_FORECAST_MEMO_RECORD_UPD'
+      EXPORTING
+        aktion   = '3'
+      TABLES
+        tab_fdes = t_fdes.
+
+    PERFORM commit_or_wait.
+
+    DELETE i_tab_fdes_disp WHERE flag = 'X'.
+  ENDIF.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form CARGAR_ARCHIVO
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+**********************************************************************
+*Rutina que se realizaba en START-OF-SELECTION del programa RFTS6510
+**********************************************************************
+FORM cargar_archivo .
+  IF l_fileformat = 'ASC'.   "ASCII->'Text ohne Feldseparator' markiert
+    CALL FUNCTION 'FILE_READ_AND_CONVERT_SAP_DATA'
+      EXPORTING
+        i_filename        = p_file
+        i_servertyp       = l_servertyp
+        i_fileformat      = l_fileformat
+        i_field_seperator = l_field_seperator
+        i_line_header     = p_header
+      TABLES
+        i_tab_receiver    = i_tab_fdes_ascii
+      EXCEPTIONS
+        OTHERS            = 4.
+  ELSE.
+    CALL FUNCTION 'FILE_READ_AND_CONVERT_SAP_DATA'
+      EXPORTING
+        i_filename        = p_file
+        i_servertyp       = l_servertyp
+        i_fileformat      = l_fileformat
+        i_field_seperator = l_field_seperator
+        i_line_header     = p_header
+      TABLES
+        i_tab_receiver    = i_tab_fdes
+      EXCEPTIONS
+        OTHERS            = 4.
+  ENDIF.
+
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE 'S' NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4 DISPLAY LIKE 'E'.
+
+  ENDIF.
+
+  IF l_fileformat = 'ASC'.
+*   oben wurde Tabelle i_tab_fdes_ascii gefüllt. Auf i_tab_fdes
+*   übertragen, damit im nachfolgenden Coding und beim Aufruf
+*   vom FB TRCM_FDES_IMPORT nicht unterschieden werden muss.
+    LOOP AT i_tab_fdes_ascii INTO l_fdes_ascii.
+      MOVE-CORRESPONDING l_fdes_ascii TO l_fdes.
+*     Betragsfelder korrigieren. Diese wurden beim move-corresponding
+*     verändert, da fdes-wrshb und fdes-dmshb 2 Nachkommastellen haben
+*     1) Dispositionswährungsbetrag
+      IF l_fdes-wrshb <> 0.
+        SELECT SINGLE currdec FROM tcurx INTO tcurx-currdec
+               WHERE currkey = l_fdes-dispw.
+        IF sy-subrc <> 0.
+          tcurx-currdec = 2.   "Defaultwert
+        ENDIF.
+
+*       Faktor ermitteln, mit der der Betrag mulitpliziert oder
+*       dividiert werden muss
+        faktor = tcurx-currdec - 2.   "bei ITL z.B. 0 - 2 = -2
+        WHILE faktor <> 0.
+          IF faktor < 0.
+            faktor = faktor + 1.
+            l_fdes-wrshb = l_fdes-wrshb / 10.
+          ELSE.
+            faktor = faktor - 1.
+            l_fdes-wrshb = l_fdes-wrshb * 10.
+          ENDIF.
+        ENDWHILE.
+      ENDIF.
+*     2) Hauswährungsbetrag
+      IF l_fdes-dmshb <> 0.
+        SELECT SINGLE waers FROM t001 INTO t001-waers
+               WHERE bukrs = l_fdes-bukrs.
+        IF sy-subrc = 0.
+          SELECT SINGLE currdec FROM tcurx INTO tcurx-currdec
+                 WHERE currkey = t001-waers.
+          IF sy-subrc <> 0.
+            tcurx-currdec = 2.   "Defaultwert
+          ENDIF.
+
+*         Faktor ermitteln, mit der der Betrag mulitpliziert oder
+*         dividiert werden muss
+          faktor = tcurx-currdec - 2.   "bei ITL z.B. 0 - 2 = -2
+          WHILE faktor <> 0.
+            IF faktor < 0.
+              faktor = faktor + 1.
+              l_fdes-dmshb = l_fdes-dmshb / 10.
+            ELSE.
+              faktor = faktor - 1.
+              l_fdes-dmshb = l_fdes-dmshb * 10.
+            ENDIF.
+          ENDWHILE.
+        ENDIF.
+      ENDIF.
+
+      APPEND l_fdes TO i_tab_fdes.
+    ENDLOOP.   "at i_tab_fdes_ascii
+  ENDIF.   "if l_fileformat = 'ASC'
+ENDFORM.
+
+*----------------------------------------------------------------------*
+*       FORM EVENTS_BUILD
+*----------------------------------------------------------------------*
+FORM events_build CHANGING VALUE(t_event) TYPE slis_t_event.
+  DATA:
+    w_event TYPE slis_alv_event.
+  CALL FUNCTION 'REUSE_ALV_EVENTS_GET'
+    EXPORTING
+      i_list_type = 0
+    IMPORTING
+      et_events   = t_event.
+*  READ TABLE t_event INTO w_event
+*       WITH KEY name = slis_ev_top_of_page.
+*  w_event-form = 'TOP_OF_PAGE'.
+*  IF sy-subrc <> 0.
+*    w_event-name = slis_ev_top_of_page.
+*    APPEND w_event TO t_event.
+*  ELSE.
+*    MODIFY t_event FROM w_event INDEX sy-tabix.
+*  ENDIF.
+
+  READ TABLE t_event INTO w_event
+       WITH KEY name = slis_ev_user_command.
+  w_event-form = 'USER_COMMAND'.
+  IF sy-subrc <> 0.
+    w_event-name = slis_ev_user_command.
+    APPEND w_event TO t_event.
+  ELSE.
+    MODIFY t_event FROM w_event INDEX sy-tabix.
+  ENDIF.
+
+  READ TABLE t_event INTO w_event
+       WITH KEY name = slis_ev_top_of_page. "slis_ev_end_of_list.
+  w_event-form = 'TOP_OF_PAGE'.
+  IF sy-subrc <> 0.
+    w_event-name = slis_ev_end_of_page."slis_ev_end_of_list.
+    APPEND w_event TO t_event.
+  ELSE.
+    MODIFY t_event FROM w_event INDEX sy-tabix.
+  ENDIF.
+
+ENDFORM.                    "events_build
+
+*---------------------------------------------------------------------*
+*       FORM TOP_OF_PAGE                                              *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+FORM top_of_page.                                           "#EC CALLED
+  PERFORM end_of_list.
+*  call function 'REUSE_ALV_COMMENTARY_WRITE'
+*       exporting
+*            it_list_commentary =
+
+ENDFORM.                    "top_of_page
+
+*---------------------------------------------------------------------*
+*       FORM PREPARE_ALV_FIELDCATALOG                                 *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+*  -->  VALUE(ALV_REPID)                                              *
+*  -->  VALUE(TABNAME)                                                *
+*  -->  VALUE(REF_TABNAME)                                            *
+*  -->  VALUE(T_FIELDCAT)                                             *
+*---------------------------------------------------------------------*
+FORM prepare_alv_fieldcatalog USING VALUE(alv_repid) LIKE sy-repid
+                                    VALUE(tabname) TYPE
+                                            slis_fieldcat_alv-tabname
+                                    VALUE(ref_tabname) TYPE
+                                           slis_fieldcat_alv-ref_tabname
+                              CHANGING VALUE(t_fieldcat)
+                                         TYPE slis_t_fieldcat_alv.
+  DATA:
+     struc_fielcat TYPE slis_fieldcat_alv.
+  DATA l_fieldcat LIKE LINE OF t_fieldcat.
+
+  CALL FUNCTION 'REUSE_ALV_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_program_name     = alv_repid
+      i_internal_tabname = tabname
+      i_structure_name   = ref_tabname
+    CHANGING
+      ct_fieldcat        = t_fieldcat
+    EXCEPTIONS
+      OTHERS             = 1.
+*  IF p_anula IS NOT INITIAL.
+*    PERFORM anadir_check CHANGING t_fieldcat.
+*  ENDIF.
+  IF sy-subrc = 0.
+    READ TABLE t_fieldcat INTO l_fieldcat WITH KEY fieldname = 'DMSHB'.
+    IF sy-subrc = 0.
+      l_fieldcat-cfieldname = 'WAERS'.
+      l_fieldcat-ctabname   = 'I_TAB_FDES '.
+      MODIFY t_fieldcat FROM l_fieldcat INDEX sy-tabix.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    "prepare_alv_fieldcatalog
+
+*---------------------------------------------------------------------*
+*       FORM USER_COMMAND                                             *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+*  -->  VALUE(R_UCOMM)                                                *
+*  -->  VALUE(RS_SELFIELD)                                            *
+*---------------------------------------------------------------------*
+FORM user_command USING r_ucomm      LIKE sy-ucomm          "#EC CALLED
+                        rs_selfield  TYPE slis_selfield.
+
+  CASE r_ucomm.
+    WHEN '&ANU'.
+      rs_selfield-refresh = 'X'.
+      rs_selfield-col_stable = 'X'.
+      rs_selfield-row_stable = 'X'.
+      PERFORM anular_memo.
+    WHEN OTHERS.
+  ENDCASE.
+
+ENDFORM.                    "user_command
+*&---------------------------------------------------------------------*
+*&      Form  END_OF_LIST
+*&---------------------------------------------------------------------*
+FORM end_of_list.
+  DATA:
+    lines_itab(10) TYPE c,
+    l_text(20)     TYPE c,
+    ttop           TYPE slis_t_listheader,
+    wtop           LIKE LINE OF ttop.
+
+  IF p_carg EQ 'X'.
+    wtop-info = TEXT-007.   "Anzahl übernommener Avise:
+    DESCRIBE TABLE i_tab_fdes LINES lines_itab.
+    CONDENSE lines_itab NO-GAPS.
+    CONCATENATE wtop-info lines_itab INTO wtop-info SEPARATED BY space.
+    wtop-typ = 'S'.
+    APPEND wtop TO ttop.
+  ELSE.
+    wtop-info = TEXT-008.   "Texto de sociedad
+    CONCATENATE wtop-info p_soc-low INTO wtop-info SEPARATED BY space.
+    wtop-typ = 'S'.
+    APPEND wtop TO ttop.
+    CLEAR wtop.
+
+*    wtop-info = TEXT-009.   "Texto de fecha
+*    CONCATENATE p_fech-low+6(2) p_fech-low+4(2) p_fech-low+0(4)
+*    INTO l_text SEPARATED BY '/'.
+*    CONCATENATE wtop-info l_text INTO wtop-info SEPARATED BY space.
+*    wtop-typ = 'S'.
+*    APPEND wtop TO ttop.
+*    CLEAR wtop.
+
+    wtop-info = TEXT-010.   "Texto de clase de dcto
+    IF p_dcto IS NOT INITIAL.
+      SELECT datxt INTO l_text FROM t037t WHERE fdart EQ p_dcto-low AND spras EQ sy-langu.
+        CONCATENATE wtop-info l_text INTO wtop-info SEPARATED BY space.
+        wtop-typ = 'S'.
+        APPEND wtop TO ttop.
+        CLEAR wtop.
+      ENDSELECT.
+    ENDIF.
+  ENDIF.
+
+  CALL FUNCTION 'REUSE_ALV_COMMENTARY_WRITE'
+    EXPORTING
+      it_list_commentary = ttop.
+
+ENDFORM.                               " END_OF_LIST
+*&---------------------------------------------------------------------*
+*& Form ANADIR_CHECK
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM anadir_check CHANGING t_fieldcat TYPE slis_t_fieldcat_alv.
+
+  DATA: l_fieldcat TYPE LINE OF slis_t_fieldcat_alv,
+        l_cant     TYPE i.
+
+  DESCRIBE TABLE t_fieldcat LINES l_cant.
+
+  l_fieldcat-col_pos = l_cant + 1.
+  l_fieldcat-fieldname = 'FLAG'.
+  l_fieldcat-tabname = 'I_TAB_FDES'.
+  l_fieldcat-datatype = 'CHAR'.
+  l_fieldcat-inttype = 'C'.
+  l_fieldcat-intlen = '1'.
+  l_fieldcat-ref_tabname = 'FDES_IMPORT'.
+  l_fieldcat-reptext_ddic = ''.
+  l_fieldcat-ddic_outputlen = 1.
+  l_fieldcat-checkbox = 'X'.
+  l_fieldcat-input = 'X'.
+  l_fieldcat-edit = 'X'.
+
+  APPEND l_fieldcat TO t_fieldcat.
+
+ENDFORM.
+
+FORM init_layout USING p_layout TYPE slis_layout_alv.
+  p_layout-zebra             = 'X'.
+  p_layout-colwidth_optimize = 'X'.
+*  p_layout-key_hotspot       = 'X'.
+  p_layout-box_fieldname     = 'FLAG'.
+ENDFORM.
+
+*------------DEFINICIONES ALV------------------------------------------*
+
+*----------------------------------------------------------------------*
+FORM set_pf_status_t USING rt_extab TYPE slis_t_extab.
+  TYPES: BEGIN OF tab_type, fcode LIKE rsmpe-func,
+         END OF tab_type.
+
+  DATA: tab2    TYPE STANDARD TABLE OF tab_type WITH
+                 NON-UNIQUE DEFAULT KEY INITIAL SIZE 10,
+        wa_tab2 TYPE tab_type.
+
+  DATA: tab    TYPE STANDARD TABLE OF tab_type WITH
+                 NON-UNIQUE DEFAULT KEY INITIAL SIZE 10,
+        wa_tab TYPE tab_type.
+
+  CLEAR tab.
+*** Excluye botones de alv de caguirre
+*  CLEAR tab2.
+*  MOVE 'RELIB' TO wa_tab2-fcode.
+*  APPEND wa_tab2 TO tab2.
+*  MOVE 'REF' TO wa_tab2-fcode.
+*  APPEND wa_tab2 TO tab2.
+*  MOVE 'ELIMINAR' TO wa_tab2-fcode.
+*  APPEND wa_tab2 TO tab2.
+*  MOVE 'MASIVA' TO wa_tab2-fcode.
+*  APPEND wa_tab2 TO tab2.
+*  MOVE 'REFRESH' TO wa_tab2-fcode.
+*  APPEND wa_tab2 TO tab2.
+*  MOVE 'ST4' TO wa_tab2-fcode.
+*  APPEND wa_tab2 TO tab2.
+*  MOVE 'ST3' TO wa_tab2-fcode.
+*  APPEND wa_tab2 TO tab2.
+*  MOVE 'ST7' TO wa_tab2-fcode.
+*  APPEND wa_tab2 TO tab2.
+*  MOVE 'BORRAR' TO wa_tab2-fcode.
+*  APPEND wa_tab2 TO tab2.
+
+  SET PF-STATUS 'STANDARD'. "  EXCLUDING tab2.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form CARGAR_ALV
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM cargar_alv .
+  DATA alv_status TYPE slis_formname.
+  IF p_anula EQ 'X'.
+    alv_status = 'SET_PF_STATUS_T'.
+  ENDIF.
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_callback_program       = alv_repid
+      i_callback_user_command  = alv_user_command_form
+      i_callback_pf_status_set = alv_status
+      it_fieldcat              = alv_fieldcat
+      is_layout                = alv_layout
+      it_events                = alv_events
+      i_save                   = 'A'
+      is_variant               = alv_variant
+    TABLES
+      t_outtab                 = i_tab_fdes_disp  "i_tab_fdes
+    EXCEPTIONS
+      program_error            = 0
+      OTHERS                   = 0.
+
+ENDFORM.

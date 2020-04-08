@@ -1,0 +1,9 @@
+INCLUDE zcfin_memo_rec_top.
+
+INCLUDE zcfin_memo_rec_sel.
+
+INCLUDE trux_selection_screen_data.
+
+INCLUDE zcfin_memo_rec_prd.
+
+INCLUDE zcfin_memo_rec_f01.

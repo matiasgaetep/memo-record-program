@@ -1,0 +1,155 @@
+*&---------------------------------------------------------------------*
+*& Include          ZCFIN_MEMO_REC_ALV_STANDARD
+*&---------------------------------------------------------------------*
+*------------------ selection-screen ----------------------------------*
+AT SELECTION-SCREEN.
+* note 1511995
+  CALL FUNCTION 'FILE_VALIDATE_NAME'
+    EXPORTING
+      logical_filename  = gc_fname
+*     any parameters defined for that logical file name
+    CHANGING
+      physical_filename = p_file
+    EXCEPTIONS
+      OTHERS            = 1.
+
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+      WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+*------------------ initialization ------------------------------------*
+INITIALIZATION.
+* SFIN obsolete OUT objects - START
+*  call method cl_ffhn_switch_check=>object_obsolete.
+* SFIN obsolete OUT objects - END
+* note 1511995
+  CALL FUNCTION 'FILE_GET_NAME'
+    EXPORTING
+      logical_filename = gc_fname
+*     any parameters defined for that logical file name
+      including_dir    = 'X'
+    IMPORTING
+      file_name        = p_file
+    EXCEPTIONS
+      OTHERS           = 1.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE 'W' NUMBER sy-msgno
+      WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+*------------------ start-of-selection ---------------------------------*
+START-OF-SELECTION.
+  IF p_carg IS NOT INITIAL. " Proceso para cargar MEMOS
+    PERFORM cargar_archivo.
+  ELSE.                 " Proceso para anular MEMOS
+    PERFORM busca_registros.
+  ENDIF.
+
+END-OF-SELECTION.
+* Check and save FDES data
+  IF p_carg IS NOT INITIAL.
+    CALL FUNCTION 'TRCM_FDES_IMPORT'
+      EXPORTING
+        i_mode        = p_test
+      TABLES
+        i_tab_fdes    = i_tab_fdes
+      EXCEPTIONS
+        error_message = 4
+        ignore        = 1
+        OTHERS        = 5.
+
+    IF sy-subrc <> 0.
+      IF sy-subrc = 1.
+        MESSAGE i384(rq) WITH sy-msgv1.
+        COMMIT WORK.
+      ELSEIF sy-subrc > 1.
+        MESSAGE ID sy-msgid TYPE 'E' NUMBER sy-msgno
+                WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+*    ROLLBACK WORK.
+        EXIT.
+      ENDIF.
+    ELSE.
+      COMMIT WORK.
+    ENDIF.
+  ELSE.                 " Proceso para anular MEMOS
+
+  ENDIF.
+
+**** ALV Processing
+
+  IF p_carg EQ 'X'.
+    DESCRIBE TABLE i_tab_fdes LINES sy-tabix.
+  ELSE.
+    DESCRIBE TABLE i_tab_fdes_disp LINES sy-tabix.
+  ENDIF.
+
+  CHECK sy-tabix <> 0.
+
+  alv_repid = sy-repid.
+
+  PERFORM init_layout USING alv_layout.
+* Events
+  PERFORM events_build CHANGING alv_events.
+
+* Felder
+  PERFORM prepare_alv_fieldcatalog USING alv_repid
+                                         alv_name_thead
+                                         alv_ref_tabname
+                                   CHANGING alv_fieldcat.
+* Variante
+  alv_variant-report   = alv_repid.
+  alv_variant-username = sy-uname.
+  alv_variant-handle   = alv_user_command_form.
+
+* prepare data to be displayed
+  IF p_carg EQ 'X'.
+    LOOP AT i_tab_fdes INTO l_fdes.
+      MOVE-CORRESPONDING l_fdes TO x_fdes_import.
+
+      CALL FUNCTION 'FI_COMPANYCODE_GETDETAIL'
+        EXPORTING
+          bukrs_int       = x_fdes_import-bukrs
+          authority_check = space
+        IMPORTING
+          t001_int        = companycode_detail
+        TABLES
+          t001z_int       = t_appendix
+        EXCEPTIONS
+          error_message   = 4
+          OTHERS          = 4.
+
+      IF sy-subrc <> 0.
+        CLEAR x_fdes_import-waers.
+      ELSE.
+        x_fdes_import-waers = companycode_detail-waers.
+      ENDIF.
+      APPEND x_fdes_import TO i_tab_fdes_disp.
+    ENDLOOP.
+  ENDIF.
+*
+  PERFORM cargar_alv.
+
+  AT SELECTION-SCREEN OUTPUT.
+
+  LOOP AT SCREEN.
+
+    IF SCREEN-GROUP1 = 'ANU'.
+      CASE p_anula.
+        WHEN 'X'.
+          SCREEN-ACTIVE = 1.
+        WHEN OTHERS.
+          SCREEN-ACTIVE = 0.
+      ENDCASE.
+    ELSEIF SCREEN-GROUP1 = 'TES'.
+      CASE p_anula.
+        WHEN 'X'.
+          SCREEN-ACTIVE = 0.
+        WHEN OTHERS.
+          SCREEN-ACTIVE = 1.
+      ENDCASE.
+    ENDIF.
+
+    MODIFY SCREEN.
+
+  ENDLOOP.

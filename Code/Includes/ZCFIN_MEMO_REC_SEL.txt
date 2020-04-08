@@ -1,0 +1,43 @@
+*&---------------------------------------------------------------------*
+*& Include          ZCFIN_MEMO_REC_SEL
+*&---------------------------------------------------------------------*
+
+INCLUDE zcfin_bloq.
+
+SELECTION-SCREEN BEGIN OF BLOCK screen3. "Bloque principal
+
+SELECTION-SCREEN BEGIN OF BLOCK comp WITH FRAME.
+
+PARAMETERS p_anula LIKE l_fileserv_rep RADIOBUTTON GROUP r3 DEFAULT 'X' USER-COMMAND R.
+PARAMETERS p_carg LIKE l_fileserv_rep RADIOBUTTON GROUP r3.
+
+SELECTION-SCREEN END OF BLOCK comp.
+
+SELECTION-SCREEN END OF BLOCK screen3. "Final bloque principal
+*Opción de carga masiva de MEMO
+**********************************************************************
+
+SELECTION-SCREEN BEGIN OF BLOCK screen1. "Bloque de carga de MEMO
+
+*Bloque de ruta de archivo
+SELECTION-SCREEN INCLUDE BLOCKS in1.
+*Bloque de opciones de formato
+SELECTION-SCREEN INCLUDE BLOCKS in12.
+
+SELECTION-SCREEN END OF BLOCK screen1. " Final carga de MEMO
+
+*Opción de anulación masiva de MEMO
+**********************************************************************
+
+
+SELECTION-SCREEN BEGIN OF BLOCK screen2. "Bloque de anulación de MEMO
+
+SELECTION-SCREEN BEGIN OF BLOCK comp1 WITH FRAME TITLE TEXT-amm.
+SELECT-OPTIONS:
+ p_soc  FOR fdes-bukrs                           MODIF ID anu,
+ p_fech FOR fdes-datum DEFAULT sy-datum TO l_max MODIF ID anu,
+ p_dcto FOR fdes-dsart                           MODIF ID anu.
+SELECTION-SCREEN END OF BLOCK comp1.
+
+SELECTION-SCREEN END OF BLOCK screen2. " Final Anulación de MEMO
+**********************************************************************

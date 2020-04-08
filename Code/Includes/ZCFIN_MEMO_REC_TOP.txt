@@ -1,0 +1,84 @@
+*&---------------------------------------------------------------------*
+*& Include          ZCFIN_MEMO_REC_TOP
+*&---------------------------------------------------------------------*
+* Doku siehe Kommentarzeilen im RFTS6510_CREATE_STRUCTURE oben
+
+REPORT zcfin_memo_rec.
+
+**********************************************************************
+*Declaraciones Standard de programa RFTS6510
+**********************************************************************
+* Datendeklarationen:
+* note 1511995
+CONSTANTS:
+gc_fname     TYPE fileintern VALUE 'FCLM_CM_MEMO_RECORD_IMPORT'.
+
+TYPE-POOLS: truxs, slis.
+TABLES: tcurx, t001, fdes, t037t.
+
+DATA: BEGIN OF x_fdes_import.
+        DATA:   flag  TYPE char01.
+        INCLUDE STRUCTURE fdes_import.
+        DATA:   idenr TYPE idenr.
+        DATA:   color TYPE lvc_t_scol.
+        DATA:   waers TYPE waers,   "für Hauswährungsschlüssel für ALV-Aufruf
+      END OF x_fdes_import.
+
+DATA: BEGIN OF x_fdes_import_ascii.
+*       warum sind im FDES_IMPORT_ASCII, bzw. genau im FDIES_ASCII die
+*       Felder WRSHB und DMSHB mit CHAR16 und nicht mit NUMC16
+*       deklariert? -> weil bei NUMC-Feldern die Nachkommastellen
+*       verloren gehen (d.h. der Betrag wird gerundet) und kein
+*       Vorzeichen mitgegeben werden kann.
+*       In übergebener Datei muss zwischen Vor- und Nachkommastellen
+*       ein Punkt stehen (Komma führt zum Laufzeitfehler)
+        INCLUDE STRUCTURE fdes_import_ascii.
+*data:  waers type waers,   "wird nicht benötigt
+      DATA: END OF x_fdes_import_ascii.
+
+DATA: i_tab_fdes_disp LIKE x_fdes_import OCCURS 1.
+DATA: tab_aux         LIKE x_fdes_import OCCURS 1.
+
+DATA  l_fdes       LIKE fdes_import.
+DATA  l_fdes_disp  LIKE x_fdes_import.
+DATA  l_fdes_ascii LIKE fdes_import_ascii.
+
+DATA: i_tab_fdes       LIKE fdes_import     OCCURS 1.
+DATA: i_tab_fdes_ascii LIKE fdes_import_ascii OCCURS 1.
+
+DATA:
+  faktor                TYPE i,
+  alv_name_thead        TYPE slis_tabname VALUE 'I_TAB_FDES',
+  alv_ref_tabname       TYPE slis_fieldcat_alv-ref_tabname
+                                       VALUE 'FDES_IMPORT',
+  alv_repid             LIKE sy-repid,
+  alv_keyinfo           TYPE slis_keyinfo_alv,
+  alv_fieldcat          TYPE slis_t_fieldcat_alv,
+  alv_user_command_form TYPE slis_formname VALUE 'USER_COMMAND',
+  alv_layout            TYPE slis_layout_alv,
+  alv_print             TYPE slis_print_alv,
+  alv_sort              TYPE slis_t_sortinfo_alv,
+  alv_events            TYPE slis_t_event,
+  alv_variant           LIKE disvariant.
+DATA: companycode_detail LIKE t001_bf.
+DATA: t_appendix         LIKE t001z_bf OCCURS 0 WITH HEADER LINE.
+
+**********************************************************************
+*Declaración de estructuras
+**********************************************************************
+
+**********************************************************************
+*Declaración de variables
+**********************************************************************
+DATA:
+  l_fileform_rep    TYPE trtm_format_seldynpro,
+  l_fileserv_rep    TYPE trux_servertyp_seldynpro,
+  l_servertyp       TYPE truxs_server VALUE 'APP',
+  l_out_servertyp   TYPE truxs_server VALUE 'APP',
+  l_fileformat      TYPE  truxs_fileformat VALUE 'XLS',
+  l_repid           TYPE sy-repid,
+  l_field_seperator TYPE c,
+  l_texto(100)      TYPE c,
+  l_resp            TYPE c,
+  l_cant(10)        TYPE c,
+  l_max             TYPE sy-datum VALUE '99991231'.
